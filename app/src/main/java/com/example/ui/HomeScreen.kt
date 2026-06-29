@@ -300,16 +300,45 @@ fun HomeScreen(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Center Location Icon Button
+                    // 1. Zoom Out to World Map (Peta Dunia)
                     SmallFloatingActionButton(
                         onClick = {
-                            // Target monas or current
+                            webViewRef?.let { webView ->
+                                webView.post {
+                                    webView.evaluateJavascript("setMapLocation($targetLat, $targetLng, 2, true)", null)
+                                }
+                            }
+                        },
+                        containerColor = Color.White,
+                        contentColor = Color(0xFF10B981) // Emerald Green
+                    ) {
+                        Icon(Icons.Default.Public, "Lihat Peta Dunia")
+                    }
+
+                    // 2. Zoom In to Focus Pin (Fokus Koordinat)
+                    SmallFloatingActionButton(
+                        onClick = {
+                            webViewRef?.let { webView ->
+                                webView.post {
+                                    webView.evaluateJavascript("setMapLocation($targetLat, $targetLng, 15, true)", null)
+                                }
+                            }
+                        },
+                        containerColor = Color.White,
+                        contentColor = Color(0xFF1B6EF3) // Standard Blue
+                    ) {
+                        Icon(Icons.Default.LocationSearching, "Fokus Pin")
+                    }
+
+                    // 3. Reset to Jakarta Monas
+                    SmallFloatingActionButton(
+                        onClick = {
                             viewModel.updateCoordinates(-6.175392, 106.827153, context)
                         },
                         containerColor = Color.White,
-                        contentColor = Color(0xFF1B6EF3)
+                        contentColor = Color(0xFFE11D48) // Crimson Red
                     ) {
-                        Icon(Icons.Default.LocationSearching, "Center Map")
+                        Icon(Icons.Default.Home, "Reset Jakarta")
                     }
                 }
             }
