@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -62,12 +63,14 @@ fun HomeScreen(
     val isAccuracyVarEnabled by viewModel.isAccuracyVarEnabled.collectAsStateWithLifecycle()
     val isMockingActive by viewModel.isMockingActive.collectAsStateWithLifecycle()
 
-    val searchResult by viewModel.searchResult.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
     val searchError by viewModel.searchError.collectAsStateWithLifecycle()
 
     val aiRecommendation by viewModel.aiRecommendation.collectAsStateWithLifecycle()
     val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
+    val reverseGeocodedAddress by viewModel.reverseGeocodedAddress.collectAsStateWithLifecycle()
+    val isUpdateFromMap by viewModel.isUpdateFromMap.collectAsStateWithLifecycle()
 
     // Local controller states
     var searchQuery by remember { mutableStateOf("") }
@@ -86,10 +89,14 @@ fun HomeScreen(
 
     // When coordinate updates from outside the map (e.g. bookmark/search), fly map marker
     LaunchedEffect(targetLat, targetLng) {
-        webViewRef?.let { webView ->
-            webView.post {
-                webView.evaluateJavascript("setMapLocation($targetLat, $targetLng, 15, true)", null)
+        if (!isUpdateFromMap) {
+            webViewRef?.let { webView ->
+                webView.post {
+                    webView.evaluateJavascript("setMapLocation($targetLat, $targetLng, 15, true)", null)
+                }
             }
+        } else {
+            viewModel.resetUpdateFromMap()
         }
     }
 
@@ -238,13 +245,61 @@ fun HomeScreen(
                         )
                     }
 
-                    searchResult?.let { result ->
-                        Text(
-                            text = "Ditemukan: ${result.displayName}",
-                            color = Color(0xFF34D399), // Emerald Accent
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
+                    AnimatedVisibility(visible = searchResults.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .background(Color(0xFFF0F4FF), RoundedCornerShape(8.dp))
+                                .border(1.dp, Color(0xFFD3E2FF), RoundedCornerShape(8.dp))
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Hasil Pencarian (Pilih salah satu):",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1B6EF3)
+                                ),
+                                modifier = Modifier.padding(bottom = 4.dp, start = 4.dp)
+                            )
+                            searchResults.forEachIndexed { index, result ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            searchQuery = result.displayName
+                                            viewModel.updateCoordinates(result.latitude, result.longitude, context)
+                                            viewModel.clearSearchResults()
+                                        }
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Place,
+                                        contentDescription = "Lokasi",
+                                        tint = Color(0xFF1B6EF3),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = result.displayName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF1B1B1F),
+                                        maxLines = 2,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (index < searchResults.lastIndex) {
+                                    HorizontalDivider(
+                                        color = Color(0xFFE1E2EC),
+                                        thickness = 0.5.dp,
+                                        modifier = Modifier.padding(horizontal = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -280,7 +335,7 @@ fun HomeScreen(
                                 @android.webkit.JavascriptInterface
                                 fun onLocationSelected(lat: Double, lng: Double) {
                                     // Triggered on Map Click or Drag pin end
-                                    viewModel.updateCoordinates(lat, lng, context)
+                                    viewModel.updateCoordinates(lat, lng, context, fromMap = true)
                                 }
                             }, "AndroidBridge")
 
@@ -376,6 +431,16 @@ fun HomeScreen(
                                 fontFamily = FontFamily.Monospace,
                                 modifier = Modifier.padding(vertical = 2.dp)
                              )
+                            reverseGeocodedAddress?.let { address ->
+                                Text(
+                                    text = address,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF5E6066),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                         }
 
                         // Save coordinate bookmark icon

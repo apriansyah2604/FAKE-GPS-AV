@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URL
 import java.net.URLEncoder
+import com.example.BuildConfig
 
 class LocationViewModel(context: Context) : ViewModel() {
 
@@ -49,14 +50,18 @@ class LocationViewModel(context: Context) : ViewModel() {
     val isMockingActive: StateFlow<Boolean> = _isMockingActive.asStateFlow()
 
     // Geocoder Search state
-    private val _searchResult = MutableStateFlow<GeocodeResult?>(null)
-    val searchResult: StateFlow<GeocodeResult?> = _searchResult.asStateFlow()
+    private val _searchResults = MutableStateFlow<List<GeocodeResult>>(emptyList())
+    val searchResults: StateFlow<List<GeocodeResult>> = _searchResults.asStateFlow()
 
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
     private val _searchError = MutableStateFlow<String?>(null)
     val searchError: StateFlow<String?> = _searchError.asStateFlow()
+
+    // Reverse Geocoding state
+    private val _reverseGeocodedAddress = MutableStateFlow<String?>(null)
+    val reverseGeocodedAddress: StateFlow<String?> = _reverseGeocodedAddress.asStateFlow()
 
     // AI suggestions & analysis state
     private val _aiRecommendation = MutableStateFlow<String?>(null)
@@ -79,9 +84,15 @@ class LocationViewModel(context: Context) : ViewModel() {
         }
     }
 
-    fun updateCoordinates(lat: Double, lng: Double, context: Context? = null) {
+    // Track if the latest coordinate update originated from the map itself (to prevent infinite loop or view jittering)
+    private val _isUpdateFromMap = MutableStateFlow(false)
+    val isUpdateFromMap: StateFlow<Boolean> = _isUpdateFromMap.asStateFlow()
+
+    fun updateCoordinates(lat: Double, lng: Double, context: Context? = null, fromMap: Boolean = false) {
+        _isUpdateFromMap.value = fromMap
         _targetLat.value = lat
         _targetLng.value = lng
+        reverseGeocode(lat, lng)
 
         // If currently mocking, instantly stream updated parameters to service
         if (MockLocationService.isRunning && context != null) {
@@ -94,6 +105,56 @@ class LocationViewModel(context: Context) : ViewModel() {
                 putExtra(MockLocationService.EXTRA_ACCURACY_VAR, _isAccuracyVarEnabled.value)
             }
             context.startService(intent)
+        }
+    }
+
+    fun resetUpdateFromMap() {
+        _isUpdateFromMap.value = false
+    }
+
+    fun reverseGeocode(lat: Double, lng: Double) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val mapsApiKey = try {
+                    BuildConfig.MAPS_API_KEY
+                } catch (e: Exception) {
+                    ""
+                }
+                val hasValidGoogleKey = mapsApiKey.isNotBlank() && mapsApiKey != "MY_MAPS_API_KEY"
+                
+                var addressFound = ""
+                
+                if (hasValidGoogleKey) {
+                    val encodedLatLng = URLEncoder.encode("$lat,$lng", "UTF-8")
+                    val urlString = "https://maps.googleapis.com/maps/api/geocode/json?latlng=$encodedLatLng&key=$mapsApiKey&language=id"
+                    val connection = URL(urlString).openConnection()
+                    connection.setRequestProperty("User-Agent", "FakeGpsStealthApp/1.0 (Android Client)")
+                    val responseText = connection.getInputStream().bufferedReader().use { it.readText() }
+                    val jsonResponse = org.json.JSONObject(responseText)
+                    if (jsonResponse.optString("status", "") == "OK") {
+                        val results = jsonResponse.getJSONArray("results")
+                        if (results.length() > 0) {
+                            addressFound = results.getJSONObject(0).getString("formatted_address")
+                        }
+                    }
+                }
+                
+                if (addressFound.isBlank()) {
+                    // Fallback to OSM Nominatim reverse geocoding
+                    val urlString = "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json&accept-language=id,en"
+                    val connection = URL(urlString).openConnection()
+                    connection.setRequestProperty("User-Agent", "FakeGpsStealthApp/1.0 (Android Client)")
+                    val responseText = connection.getInputStream().bufferedReader().use { it.readText() }
+                    val jsonResponse = org.json.JSONObject(responseText)
+                    addressFound = jsonResponse.optString("display_name", "")
+                }
+                
+                if (addressFound.isNotBlank()) {
+                    _reverseGeocodedAddress.value = addressFound
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -209,41 +270,193 @@ class LocationViewModel(context: Context) : ViewModel() {
         }
     }
 
+    fun clearSearchResults() {
+        _searchResults.value = emptyList()
+    }
+
     // Geocoding Search using OpenStreetMap Nominatim API (No API keys needed, fully functional)
     fun searchPlace(query: String) {
         if (query.isBlank()) return
         _isSearching.value = true
         _searchError.value = null
+        _searchResults.value = emptyList()
 
+        // 1. Direct coordinate check: matches "-6.175392, 106.827153" or "-6.175392 106.827153"
+        val coordRegex = """^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*$""".toRegex()
+        val matchResult = coordRegex.find(query)
+        if (matchResult != null) {
+            try {
+                val lat = matchResult.groupValues[1].toDouble()
+                val lon = matchResult.groupValues[2].toDouble()
+                val customResult = GeocodeResult(lat, lon, "Koordinat Kustom: $lat, $lon")
+                _searchResults.value = listOf(customResult)
+                _targetLat.value = lat
+                _targetLng.value = lon
+                _isSearching.value = false
+                return
+            } catch (e: Exception) {
+                // Fail-safe fallback to normal OSM query if parsing has issues
+            }
+        }
+
+        // 2. OSM Nominatim or Google Geocoding Search (Indonesian language preference, with spelling/abbreviation fallbacks)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val encodedQuery = URLEncoder.encode(query, "UTF-8")
-                val urlString = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&limit=1"
-                val connection = URL(urlString).openConnection()
-                connection.setRequestProperty("User-Agent", "FakeGpsStealthApp/1.0 (Android Client)")
+                val mapsApiKey = try {
+                    BuildConfig.MAPS_API_KEY
+                } catch (e: Exception) {
+                    ""
+                }
+                val hasValidGoogleKey = mapsApiKey.isNotBlank() && mapsApiKey != "MY_MAPS_API_KEY"
 
-                val responseText = connection.getInputStream().bufferedReader().use { it.readText() }
-                val jsonArray = org.json.JSONArray(responseText)
+                var foundResults = false
+                var lastException: Exception? = null
 
-                if (jsonArray.length() > 0) {
-                    val obj = jsonArray.getJSONObject(0)
-                    val lat = obj.getDouble("lat")
-                    val lon = obj.getDouble("lon")
-                    val displayName = obj.getString("display_name")
+                // Generate alternative candidate queries to make searches extremely resilient
+                val queriesToTry = mutableListOf<String>()
+                queriesToTry.add(query)
 
-                    _searchResult.value = GeocodeResult(lat, lon, displayName)
-                    _targetLat.value = lat
-                    _targetLng.value = lon
-                } else {
-                    _searchError.value = "Lokasi tidak ditemukan."
+                // Alternate between Indonesian spellings "Grha" and "Graha"
+                if (query.contains("grha", ignoreCase = true)) {
+                    queriesToTry.add(query.replace("grha", "graha", ignoreCase = true))
+                    queriesToTry.add(query.replace("grha", "Graha", ignoreCase = true))
+                } else if (query.contains("graha", ignoreCase = true)) {
+                    queriesToTry.add(query.replace("graha", "grha", ignoreCase = true))
+                    queriesToTry.add(query.replace("graha", "Grha", ignoreCase = true))
+                }
+
+                // Alternate between British and American English spellings "Centre" and "Center"
+                if (query.contains("centre", ignoreCase = true)) {
+                    queriesToTry.add(query.replace("centre", "center", ignoreCase = true))
+                } else if (query.contains("center", ignoreCase = true)) {
+                    queriesToTry.add(query.replace("center", "centre", ignoreCase = true))
+                }
+
+                // Combined substitution variations (e.g. Grha ... Centre -> Graha ... Center)
+                var combined = query
+                if (combined.contains("grha", ignoreCase = true)) {
+                    combined = combined.replace("grha", "graha", ignoreCase = true)
+                } else if (combined.contains("graha", ignoreCase = true)) {
+                    combined = combined.replace("graha", "grha", ignoreCase = true)
+                }
+                if (combined.contains("centre", ignoreCase = true)) {
+                    combined = combined.replace("centre", "center", ignoreCase = true)
+                } else if (combined.contains("center", ignoreCase = true)) {
+                    combined = combined.replace("center", "centre", ignoreCase = true)
+                }
+                if (combined != query && !queriesToTry.contains(combined)) {
+                    queriesToTry.add(combined)
+                }
+
+                // Try stripping prefix descriptors (e.g. "Grha ", "Graha ", "Gedung ", "Hotel ") so we search for the core name
+                val cleanPrefixes = listOf("grha ", "graha ", "gedung ", "hotel ", "rs ", "rsu ", "klinik ")
+                for (prefix in cleanPrefixes) {
+                    if (query.lowercase().startsWith(prefix)) {
+                        val stripped = query.substring(prefix.length).trim()
+                        if (stripped.isNotEmpty() && !queriesToTry.contains(stripped)) {
+                            queriesToTry.add(stripped)
+                            if (stripped.contains("centre", ignoreCase = true)) {
+                                queriesToTry.add(stripped.replace("centre", "center", ignoreCase = true))
+                            } else if (stripped.contains("center", ignoreCase = true)) {
+                                queriesToTry.add(stripped.replace("center", "centre", ignoreCase = true))
+                            }
+                        }
+                    }
+                }
+
+                // First, try Google Maps Geocoding API if a valid key is provided
+                if (hasValidGoogleKey) {
+                    for (candidate in queriesToTry.distinct()) {
+                        try {
+                            val encodedQuery = URLEncoder.encode(candidate, "UTF-8")
+                            val urlString = "https://maps.googleapis.com/maps/api/geocode/json?address=$encodedQuery&key=$mapsApiKey&language=id"
+                            val connection = URL(urlString).openConnection()
+                            connection.setRequestProperty("User-Agent", "FakeGpsStealthApp/1.0 (Android Client)")
+
+                            val responseText = connection.getInputStream().bufferedReader().use { it.readText() }
+                            val jsonResponse = org.json.JSONObject(responseText)
+                            val status = jsonResponse.optString("status", "")
+
+                            if (status == "OK") {
+                                val resultsArray = jsonResponse.getJSONArray("results")
+                                if (resultsArray.length() > 0) {
+                                    val list = mutableListOf<GeocodeResult>()
+                                    for (i in 0 until resultsArray.length()) {
+                                        val resultObj = resultsArray.getJSONObject(i)
+                                        val formattedAddress = resultObj.getString("formatted_address")
+                                        val geometry = resultObj.getJSONObject("geometry")
+                                        val location = geometry.getJSONObject("location")
+                                        val lat = location.getDouble("lat")
+                                        val lon = location.getDouble("lng")
+                                        list.add(GeocodeResult(lat, lon, formattedAddress))
+                                    }
+                                    _searchResults.value = list
+                                    val bestMatch = list.first()
+                                    _targetLat.value = bestMatch.latitude
+                                    _targetLng.value = bestMatch.longitude
+                                    foundResults = true
+                                    break // Found results with Google, stop the loop!
+                                }
+                            }
+                        } catch (e: Exception) {
+                            lastException = e
+                            e.printStackTrace()
+                        }
+                    }
+                }
+
+                // Fallback to OSM Nominatim if Google Maps Geocoding didn't find results or wasn't configured
+                if (!foundResults) {
+                    // Sequentially try each query candidate until we get a hit
+                    for (candidate in queriesToTry.distinct()) {
+                        try {
+                            val encodedQuery = URLEncoder.encode(candidate, "UTF-8")
+                            val urlString = "https://nominatim.openstreetmap.org/search?q=$encodedQuery&format=json&limit=5&addressdetails=1&accept-language=id,en"
+                            val connection = URL(urlString).openConnection()
+                            connection.setRequestProperty("User-Agent", "FakeGpsStealthApp/1.0 (Android Client)")
+
+                            val responseText = connection.getInputStream().bufferedReader().use { it.readText() }
+                            val jsonArray = org.json.JSONArray(responseText)
+
+                            if (jsonArray.length() > 0) {
+                                val list = mutableListOf<GeocodeResult>()
+                                for (i in 0 until jsonArray.length()) {
+                                    val obj = jsonArray.getJSONObject(i)
+                                    val lat = obj.getDouble("lat")
+                                    val lon = obj.getDouble("lon")
+                                    val displayName = obj.getString("display_name")
+                                    list.add(GeocodeResult(lat, lon, displayName))
+                                }
+                                _searchResults.value = list
+                                // Auto-focus the map on the very first/best match
+                                val bestMatch = list.first()
+                                _targetLat.value = bestMatch.latitude
+                                _targetLng.value = bestMatch.longitude
+                                foundResults = true
+                                break // Successfully found results, stop the search loop!
+                            }
+                        } catch (e: Exception) {
+                            lastException = e
+                            e.printStackTrace()
+                        }
+                    }
+                }
+
+                if (!foundResults) {
+                    if (lastException != null) {
+                        _searchError.value = "Error koneksi: ${lastException.localizedMessage}"
+                    } else {
+                        _searchError.value = "Lokasi tidak ditemukan."
+                    }
                 }
             } catch (e: Exception) {
-                _searchError.value = "Error koneksi: ${e.localizedMessage}"
+                _searchError.value = "Error: ${e.localizedMessage}"
                 e.printStackTrace()
             } finally {
                 _isSearching.value = false
             }
         }
+
     }
 
     // Call Gemini AI using Firebase AI models to give custom security tips about current stealth configurations
