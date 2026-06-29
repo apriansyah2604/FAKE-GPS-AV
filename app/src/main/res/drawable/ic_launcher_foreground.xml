@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Radar Outer Ring -->
+    <path
+        android:pathData="M54,12 A34,34 0 1,1 53.9,12"
+        android:strokeWidth="1.0"
+        android:strokeColor="#3306B6D4"
+        android:strokeLineCap="round" />
+
+    <!-- Radar Middle Ring -->
+    <path
+        android:pathData="M54,20 A26,26 0 1,1 53.9,20"
+        android:strokeWidth="0.8"
+        android:strokeColor="#4D06B6D4"
+        android:strokeLineCap="round" />
+
+    <!-- Map Pin Shadows / Accent -->
+    <path
+        android:fillColor="#1A06B6D4"
+        android:pathData="M 54, 24 C 44, 24 35, 33 35, 45 C 35, 61 54, 84 54, 84 C 54, 84 73, 61 73, 45 C 73, 33 64, 24 54, 24 Z" />
+
+    <!-- Main Map Pin (Glowing Cyan) -->
+    <path
+        android:fillColor="#06B6D4"
+        android:pathData="M 54, 26 C 45, 26 37, 34 37, 45 C 37, 59 54, 81 54, 81 C 54, 81 71, 59 71, 45 C 71, 34 63, 26 54, 26 Z" />
+
+    <!-- Map Pin Inner Hole (Slate Core) -->
+    <path
+        android:fillColor="#0F172A"
+        android:pathData="M 54, 38 C 50.13, 38 47, 41.13 47, 45 C 47, 48.87 50.13, 52 54, 52 C 57.87, 52 61, 48.87 61, 45 C 61, 41.13 57.87, 38 54, 38 Z" />
+
+</vector>

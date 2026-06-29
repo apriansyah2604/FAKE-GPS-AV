@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <style>
+        body, html, #map {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            background-color: #E8EDF2;
+        }
+        /* Clean Map Styles */
+        .leaflet-tile {
+            filter: grayscale(10%) contrast(100%) brightness(102%);
+        }
+        /* Glowing Blue Circle under the marker to represent stealth radar radius */
+        .stealth-radius {
+            border: 2px dashed #1B6EF3;
+            background: rgba(27, 110, 243, 0.12);
+            border-radius: 50%;
+            animation: pulse 2s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.1); opacity: 0.9; }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+        var map = L.map('map', {
+            zoomControl: false, // will manage or let it be
+            attributionControl: false
+        }).setView([-6.2088, 106.8456], 13); // Default Jakarta
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19
+        }).addTo(map);
+
+        // Custom Glowing Cyan Pin Icon
+        var customIcon = L.icon({
+            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+            shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41]
+        });
+
+        var marker = L.marker([-6.2088, 106.8456], {
+            draggable: true,
+            icon: customIcon
+        }).addTo(map);
+
+        var accuracyCircle = null;
+
+        function updateAccuracyCircle(lat, lng, radiusInMeters) {
+            if (accuracyCircle) {
+                map.removeLayer(accuracyCircle);
+            }
+            if (radiusInMeters > 0) {
+                accuracyCircle = L.circle([lat, lng], {
+                    radius: radiusInMeters,
+                    color: '#1B6EF3',
+                    weight: 1.5,
+                    dashArray: '5, 5',
+                    fillColor: '#1B6EF3',
+                    fillOpacity: 0.12,
+                    className: 'stealth-radius-animation'
+                }).addTo(map);
+            }
+        }
+
+        // Notify Android of the default / starting point
+        notifyAndroid(marker.getLatLng().lat, marker.getLatLng().lng);
+
+        function notifyAndroid(lat, lng) {
+            if (window.AndroidBridge) {
+                window.AndroidBridge.onLocationSelected(lat, lng);
+            }
+        }
+
+        // Map Click Action
+        map.on('click', function(e) {
+            var lat = e.latlng.lat;
+            var lng = e.latlng.lng;
+            marker.setLatLng(e.latlng);
+            notifyAndroid(lat, lng);
+            updateAccuracyCircle(lat, lng, 100);
+        });
+
+        // Marker Drag Action
+        marker.on('dragend', function(e) {
+            var position = marker.getLatLng();
+            notifyAndroid(position.lat, position.lng);
+            updateAccuracyCircle(position.lat, position.lng, 100);
+        });
+
+        // External function called by Android Kotlin code
+        function setMapLocation(lat, lng, zoom, showCircle) {
+            var newLatLng = new L.LatLng(lat, lng);
+            marker.setLatLng(newLatLng);
+            map.setView(newLatLng, zoom || 15);
+            if (showCircle) {
+                updateAccuracyCircle(lat, lng, 100);
+            } else if (accuracyCircle) {
+                map.removeLayer(accuracyCircle);
+                accuracyCircle = null;
+            }
+        }
+    </script>
+</body>
+</html>

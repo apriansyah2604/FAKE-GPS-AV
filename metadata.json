@@ -1,0 +1,6 @@
+{
+  "name": "Fake GPS Stealth",
+  "description": "Aplikasi Fake GPS dengan fitur simulasi pergerakan dinamis, fluktuasi akurasi, dan jitter GPS untuk meningkatkan keamanan dari deteksi sistem pihak ketiga.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
